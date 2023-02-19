@@ -83,6 +83,10 @@ static cl::opt<exegesis::InstructionBenchmark::ModeE> BenchmarkMode(
                clEnumValN(exegesis::InstructionBenchmark::Unknown, "analysis",
                           "Analysis")));
 
+static cl::opt<std::string>
+    DumpSource("dump-source", cl::desc("Dump snippets into a YAML file"),
+               cl::value_desc("filename"));
+
 static cl::opt<exegesis::InstructionBenchmark::ResultAggregationModeE>
     ResultAggMode(
         "result-aggregation-mode",
@@ -618,6 +622,101 @@ static void analysisMain() {
       AnalysisInconsistenciesOutputFile);
 }
 
+static void dumpMain() {
+  InitializeAllAsmPrinters();
+  InitializeAllAsmParsers();
+  InitializeAllExegesisTargets();
+
+  const LLVMState State = ExitOnErr(LLVMState::Create(TripleName, MCPU));
+
+  const auto Opcodes = getOpcodesOrDie(State);
+
+  SmallVector<std::unique_ptr<const SnippetRepetitor>, 2> Repetitors;
+  if (RepetitionMode != InstructionBenchmark::RepetitionModeE::AggregateMin)
+    Repetitors.emplace_back(SnippetRepetitor::Create(RepetitionMode, State));
+  else {
+    for (InstructionBenchmark::RepetitionModeE RepMode :
+         {InstructionBenchmark::RepetitionModeE::Duplicate,
+          InstructionBenchmark::RepetitionModeE::Loop})
+      Repetitors.emplace_back(SnippetRepetitor::Create(RepMode, State));
+  }
+
+  BitVector AllReservedRegs;
+  llvm::for_each(Repetitors,
+                 [&AllReservedRegs](
+                     const std::unique_ptr<const SnippetRepetitor> &Repetitor) {
+                   AllReservedRegs |= Repetitor->getReservedRegs();
+                 });
+
+  std::vector<BenchmarkCode> Configurations;
+  if (!Opcodes.empty()) {
+    for (const unsigned Opcode : Opcodes) {
+      // Ignore instructions without a sched class if
+      // -ignore-invalid-sched-class is passed.
+      if (IgnoreInvalidSchedClass &&
+          State.getInstrInfo().get(Opcode).getSchedClass() == 0) {
+        errs() << State.getInstrInfo().getName(Opcode)
+               << ": ignoring instruction without sched class\n";
+        continue;
+      }
+
+      auto ConfigsForInstr = generateSnippets(State, Opcode, AllReservedRegs);
+      if (!ConfigsForInstr) {
+        logAllUnhandledErrors(
+            ConfigsForInstr.takeError(), errs(),
+            Twine(State.getInstrInfo().getName(Opcode)).concat(": "));
+        continue;
+      }
+      std::move(ConfigsForInstr->begin(), ConfigsForInstr->end(),
+                std::back_inserter(Configurations));
+    }
+  } else {
+    Configurations = ExitOnErr(readSnippets(State, SnippetsFile));
+  }
+
+  if (Configurations.empty())
+    return;
+
+  std::error_code EC;
+  raw_fd_ostream DumpFile{DumpSource, EC};
+
+  if (EC) {
+    llvm::errs() << "Failed to open file: " << DumpSource << " - "
+                 << EC.message() << "\n";
+    std::terminate();
+  }
+
+  DumpFile << "snippets:\n";
+
+  for (auto &Config : Configurations) {
+    DumpFile << "- info: " << Config.Info << "\n";
+    DumpFile << "  assembly: |\n";
+    const std::vector<MCInst> &Instructions = Config.Key.Instructions;
+    for (auto &Rep : Repetitors) {
+      SmallString<0> Buffer;
+      raw_svector_ostream OS(Buffer);
+      const int MinInstructions = 4 * Instructions.size();
+      ExitOnErr(assembleToStream(
+          State.getExegesisTarget(), State.createTargetMachine(),
+          Config.LiveIns, Config.Key.RegisterInitialValues,
+          Rep->Repeat(Instructions, MinInstructions, LoopBodySize), OS, true));
+
+      std::string Source = "    " + Buffer.str().str();
+
+      size_t Pos = 0;
+      while ((Pos = Source.find("\n", Pos)) != std::string::npos) {
+        Source = Source.replace(Pos, 1, "\n    ");
+        Pos += 4;
+      }
+
+      DumpFile << Source << "\n";
+      DumpFile.flush();
+    }
+  }
+
+  DumpFile.close();
+}
+
 } // namespace exegesis
 } // namespace llvm
 
@@ -653,6 +752,8 @@ int main(int Argc, char **Argv) {
 
   if (exegesis::BenchmarkMode == exegesis::InstructionBenchmark::Unknown) {
     exegesis::analysisMain();
+  } else if (exegesis::DumpSource != "") {
+    exegesis::dumpMain();
   } else {
     exegesis::benchmarkMain();
   }

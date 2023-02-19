@@ -34,7 +34,7 @@ bool pfmInitialize() {
 #ifdef HAVE_LIBPFM
   return isPfmError(pfm_initialize());
 #else
-  return true;
+  return false;
 #endif
 }
 

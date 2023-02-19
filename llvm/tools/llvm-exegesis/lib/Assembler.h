@@ -91,7 +91,8 @@ Error assembleToStream(const ExegesisTarget &ET,
                        std::unique_ptr<LLVMTargetMachine> TM,
                        ArrayRef<unsigned> LiveIns,
                        ArrayRef<RegisterValue> RegisterInitialValues,
-                       const FillFunction &Fill, raw_pwrite_stream &AsmStream);
+                       const FillFunction &Fill, raw_pwrite_stream &AsmStream,
+                       bool PrintAsText = false);
 
 // Creates an ObjectFile in the format understood by the host.
 // Note: the resulting object keeps a copy of Buffer so it can be discarded once

@@ -70,7 +70,7 @@ struct BenchmarkMeasure {
 // The result of an instruction benchmark.
 struct InstructionBenchmark {
   InstructionBenchmarkKey Key;
-  enum ModeE { Unknown, Latency, Uops, InverseThroughput };
+  enum ModeE { Unknown, Latency, Uops, InverseThroughput, Dump };
   ModeE Mode;
   std::string CpuName;
   std::string LLVMTriple;

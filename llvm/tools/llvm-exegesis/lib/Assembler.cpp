@@ -176,7 +176,8 @@ Error assembleToStream(const ExegesisTarget &ET,
                        std::unique_ptr<LLVMTargetMachine> TM,
                        ArrayRef<unsigned> LiveIns,
                        ArrayRef<RegisterValue> RegisterInitialValues,
-                       const FillFunction &Fill, raw_pwrite_stream &AsmStream) {
+                       const FillFunction &Fill, raw_pwrite_stream &AsmStream,
+                       bool PrintAsText) {
   auto Context = std::make_unique<LLVMContext>();
   std::unique_ptr<Module> Module =
       createModule(Context, TM->createDataLayout());
@@ -243,8 +244,10 @@ Error assembleToStream(const ExegesisTarget &ET,
       return make_error<Failure>("Unable to add a mandatory pass");
   TPC->setInitialized();
 
+  CodeGenFileType CGFT = PrintAsText ? CGFT_AssemblyFile : CGFT_ObjectFile;
+
   // AsmPrinter is responsible for generating the assembly into AsmBuffer.
-  if (TM->addAsmPrinter(PM, AsmStream, nullptr, CGFT_ObjectFile, MCContext))
+  if (TM->addAsmPrinter(PM, AsmStream, nullptr, CGFT, MCContext))
     return make_error<Failure>("Cannot add AsmPrinter passes");
 
   PM.run(*Module); // Run all the passes
